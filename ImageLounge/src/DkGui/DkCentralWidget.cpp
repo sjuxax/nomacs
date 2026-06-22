@@ -595,7 +595,15 @@ DkThumbScrollWidget *DkCentralWidget::createThumbScrollWidget()
     thumbScrollWidget->registerAction(DkActionManager::instance().action(DkActionManager::menu_panel_thumbview));
 
     // thumbnail preview widget
-    connect(thumbScrollWidget->getThumbWidget(), &DkThumbScene::loadFileSignal, this, &DkCentralWidget::load);
+    connect(thumbScrollWidget,
+            &DkThumbScrollWidget::loadFileSignal,
+            this,
+            [this](const QString &filePath, bool newTab) {
+                if (newTab)
+                    loadToTab(filePath);
+                else
+                    load(filePath);
+            });
     connect(thumbScrollWidget, &DkThumbScrollWidget::batchProcessFilesSignal, this, &DkCentralWidget::openBatch);
 
     return thumbScrollWidget;

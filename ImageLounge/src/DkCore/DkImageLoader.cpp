@@ -1580,6 +1580,14 @@ QString DkImageLoader::getDirPath() const
     return mCurrentDir;
 }
 
+QString DkImageLoader::getRootDirPath() const
+{
+    if (!mSubFolders.empty())
+        return mSubFolders.first();
+
+    return mCurrentDir;
+}
+
 QStringList DkImageLoader::getFoldersRecursive(const QString &dirPath)
 {
     // DkTimer dt;

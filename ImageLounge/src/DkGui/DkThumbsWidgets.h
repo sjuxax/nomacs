@@ -271,6 +271,7 @@ public:
     bool allThumbsSelected() const;
     void ensureVisible(const QString &path) const;
     void viewportChanged(const QRectF &portRect);
+    QString loaderRootDirPath() const;
 
 public slots:
     void updateThumbLabels();
@@ -369,8 +370,11 @@ public slots:
     void batchProcessFiles() const;
     void batchPrint() const;
     void onLoadFileTriggered();
+    void onThumbLoadFileRequested(const QString &filePath, bool newTab);
+    void navigateUp();
 
 signals:
+    void loadFileSignal(const QString &filePath, bool newTab) const;
     void updateDirSignal(const QString &dir);
     void filterChangedSignal(const QString &filters);
     void batchProcessFilesSignal(const QStringList &fileList) const;
@@ -381,6 +385,8 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
     void connectToActions(bool activate = true);
+    void updateUpAction();
+    QString currentRootDir() const;
 
     DkThumbScene *mThumbsScene = nullptr;
     DkThumbsView *mView = nullptr;
@@ -388,9 +394,19 @@ protected:
     QMenu *mContextMenu = nullptr;
     QToolBar *mToolbar = nullptr;
     QLineEdit *mFilterEdit = nullptr;
+    QAction *mUpAction = nullptr;
     QAction *mAction = nullptr;
     qreal mPrevDevicePixelRatio = 1.0;
     bool mActive{};
+
+    struct ThumbViewNavigationState {
+        QString dirPath;
+        QString anchorFilePath;
+    };
+
+    QVector<ThumbViewNavigationState> mNavHistory;
+    QString mExpectedRootDirAfterLoad;
+    QString mLastKnownRootDir;
 };
 
 class DkRecentDir

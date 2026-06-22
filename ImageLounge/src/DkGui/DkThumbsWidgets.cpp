@@ -42,7 +42,9 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QDir>
 #include <QDrag>
+#include <QFileInfo>
 #include <QGraphicsSceneMouseEvent>
 #include <QInputDialog>
 #include <QLayout>
@@ -1627,6 +1629,14 @@ void DkThumbScene::ensureVisible(const QString &path) const
     }
 }
 
+QString DkThumbScene::loaderRootDirPath() const
+{
+    if (!mLoader)
+        return QString();
+
+    return mLoader->getRootDirPath();
+}
+
 QString DkThumbScene::currentDir() const
 {
     if (mThumbs.empty()) {
@@ -2316,6 +2326,10 @@ DkThumbScrollWidget::DkThumbScrollWidget(DkThumbLoader *thumbLoader,
 
     mView = new DkThumbsView(mThumbsScene, this);
     mView->setFocusPolicy(Qt::StrongFocus);
+    connect(mThumbsScene,
+            &DkThumbScene::loadFileSignal,
+            this,
+            &DkThumbScrollWidget::onThumbLoadFileRequested);
 
     createActions();
     createToolbar();
@@ -2345,6 +2359,13 @@ void DkThumbScrollWidget::createToolbar()
 
     mToolbar->setIconSize(
         QSize(DkSettingsManager::param().effectiveIconSize(this), DkSettingsManager::param().effectiveIconSize(this)));
+
+    mUpAction = new QAction(DkImage::loadIcon(":/nomacs/img/up.svg"), tr("Up"), this);
+    mUpAction->setStatusTip(tr("Return to the previous folder cards"));
+    mUpAction->setToolTip(tr("Return to the previous folder cards"));
+    connect(mUpAction, &QAction::triggered, this, &DkThumbScrollWidget::navigateUp);
+    mToolbar->addAction(mUpAction);
+    mToolbar->addSeparator();
 
     DkActionManager &am = DkActionManager::instance();
     mToolbar->addAction(am.action(DkActionManager::preview_zoom_in));
@@ -2384,6 +2405,8 @@ void DkThumbScrollWidget::createToolbar()
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     mToolbar->addWidget(spacer);
     mToolbar->addWidget(mFilterEdit);
+
+    updateUpAction();
 }
 
 void DkThumbScrollWidget::createActions()
@@ -2447,23 +2470,88 @@ void DkThumbScrollWidget::onLoadFileTriggered()
     auto thumb = dynamic_cast<DkThumbLabel *>(selected.first());
 
     if (thumb)
-        mThumbsScene->loadFileSignal(thumb->filePath(), false);
+        onThumbLoadFileRequested(thumb->filePath(), false);
+}
+
+void DkThumbScrollWidget::onThumbLoadFileRequested(const QString &filePath, bool newTab)
+{
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    const QString rootDir = currentRootDir();
+    const QString targetDir = QDir::cleanPath(QFileInfo(filePath).absolutePath());
+
+    if (!rootDir.isEmpty() && !targetDir.isEmpty() && rootDir != targetDir) {
+        if (!mNavHistory.empty() && mNavHistory.constLast().dirPath == rootDir) {
+            mNavHistory.last().anchorFilePath = filePath;
+        } else {
+            mNavHistory.push_back({rootDir, filePath});
+        }
+
+        mExpectedRootDirAfterLoad = targetDir;
+    } else {
+        mExpectedRootDirAfterLoad.clear();
+    }
+
+    updateUpAction();
+    emit loadFileSignal(filePath, newTab);
+}
+
+void DkThumbScrollWidget::navigateUp()
+{
+    if (mNavHistory.empty())
+        return;
+
+    const ThumbViewNavigationState state = mNavHistory.takeLast();
+    if (state.dirPath.isEmpty()) {
+        updateUpAction();
+        return;
+    }
+
+    mExpectedRootDirAfterLoad = state.dirPath;
+    emit updateDirSignal(state.dirPath);
+
+    if (!state.anchorFilePath.isEmpty())
+        mThumbsScene->ensureVisible(state.anchorFilePath);
+
+    updateUpAction();
 }
 
 void DkThumbScrollWidget::updateThumbs(QVector<QSharedPointer<DkImageContainerT>> thumbs)
 {
+    const QString rootDir = currentRootDir();
+    if (!rootDir.isEmpty() && !mLastKnownRootDir.isEmpty() && rootDir != mLastKnownRootDir
+        && rootDir != mExpectedRootDirAfterLoad) {
+        mNavHistory.clear();
+    }
+
+    if (!rootDir.isEmpty())
+        mLastKnownRootDir = rootDir;
+    mExpectedRootDirAfterLoad.clear();
+
     mThumbsScene->updateThumbs(thumbs);
+    updateUpAction();
 }
 
 void DkThumbScrollWidget::clear()
 {
     mThumbsScene->updateThumbs(QVector<QSharedPointer<DkImageContainerT>>());
+    mNavHistory.clear();
+    mExpectedRootDirAfterLoad.clear();
+    mLastKnownRootDir.clear();
+    updateUpAction();
 }
 
 void DkThumbScrollWidget::setDir(const QString &dirPath)
 {
-    if (isVisible())
+    if (isVisible()) {
+        mNavHistory.clear();
+        mExpectedRootDirAfterLoad.clear();
+        mLastKnownRootDir.clear();
+        updateUpAction();
         emit updateDirSignal(dirPath);
+    }
 }
 
 void DkThumbScrollWidget::setVisible(bool visible)
@@ -2601,6 +2689,21 @@ void DkThumbScrollWidget::connectToActions(bool activate)
         disconnect(mView, &DkThumbsView::updateDirSignal, this, &DkThumbScrollWidget::updateDirSignal);
         disconnect(mThumbsScene, &DkThumbScene::selectionChanged, this, &DkThumbScrollWidget::enableSelectionActions);
     }
+}
+
+void DkThumbScrollWidget::updateUpAction()
+{
+    if (mUpAction) {
+        mUpAction->setEnabled(!mNavHistory.empty());
+    }
+}
+
+QString DkThumbScrollWidget::currentRootDir() const
+{
+    if (!mThumbsScene)
+        return QString();
+
+    return mThumbsScene->loaderRootDirPath();
 }
 
 void DkThumbScrollWidget::setFilterFocus() const

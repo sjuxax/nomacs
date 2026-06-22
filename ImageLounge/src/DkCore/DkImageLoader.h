@@ -80,6 +80,7 @@ public:
     QSharedPointer<DkImageContainerT> getSkippedImage(int skipIdx, bool recursive = false, int currFileIdx = 0);
 
     QString getDirPath() const;
+    QString getRootDirPath() const;
     void setDir(const DkFileInfo &info);
     bool hasMovie() const;
     bool hasSvg() const;
