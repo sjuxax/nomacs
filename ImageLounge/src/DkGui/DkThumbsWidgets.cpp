@@ -1349,6 +1349,12 @@ void DkThumbScene::updateLayout()
 
 void DkThumbScene::updateThumbs(QVector<QSharedPointer<DkImageContainerT>> thumbs)
 {
+    // When recursively scanning subfolders, the loader only loads images for the
+    // current subfolder. For the thumbnail card view we want every image across all
+    // subfolders, so substitute the full recursive list when the loader is the sender.
+    if (mLoader && sender() == mLoader.data() && DkSettingsManager::param().global().scanSubFolders)
+        thumbs = mLoader->getImagesForThumbView();
+
     const DkThumbLabel *anchor = mThumbLabels.value(mSelectionAnchor);
     const DkThumbLabel *cursor = mThumbLabels.value(mSelectionCursor);
     const QString anchorPath = anchor ? anchor->filePath() : QString{};

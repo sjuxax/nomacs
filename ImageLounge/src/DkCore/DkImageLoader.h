@@ -67,6 +67,7 @@ public:
     QStringList getFileNames() const;
 
     QVector<QSharedPointer<DkImageContainerT>> getImages();
+    QVector<QSharedPointer<DkImageContainerT>> getImagesForThumbView() const;
     void setImage(const QImage &img, const QString &editName);
     void setImage(QSharedPointer<DkImageContainerT> img);
     void setImageUpdated();

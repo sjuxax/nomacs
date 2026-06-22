@@ -846,7 +846,7 @@ void DkCentralWidget::showThumbView(bool show)
         tw->getThumbWidget()->setImageLoader(imageLoader);
 
         if (imageLoader) {
-            tw->updateThumbs(imageLoader->getImages());
+            tw->updateThumbs(imageLoader->getImagesForThumbView());
 
             auto image = imageLoader->getCurrentImage();
             if (image)

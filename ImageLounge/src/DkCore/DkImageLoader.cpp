@@ -66,6 +66,20 @@
 
 namespace nmc
 {
+namespace
+{
+bool sameDirPath(const QString &left, const QString &right)
+{
+#ifdef Q_OS_WIN
+    constexpr Qt::CaseSensitivity caseSensitivity = Qt::CaseInsensitive;
+#else
+    constexpr Qt::CaseSensitivity caseSensitivity = Qt::CaseSensitive;
+#endif
+    return QString::compare(QDir::cleanPath(left), QDir::cleanPath(right), caseSensitivity) == 0;
+}
+
+}
+
 DkImageLoader::DkImageLoader()
 {
     qRegisterMetaType<QFileInfo>("QFileInfo");
@@ -408,21 +422,31 @@ QSharedPointer<DkImageContainerT> DkImageLoader::getSkippedImage(int skipIdx,
 
     // invalid index means we have to loop, search subfolder etc depending on settings
     bool validIndex = newFileIdx >= 0 && newFileIdx < mImages.size();
+    const bool scanSubFolders = DkSettingsManager::param().global().scanSubFolders;
 
     // search subfolders
-    if (!validIndex && DkSettingsManager::param().global().scanSubFolders && mSubFolders.size() > 1) {
+    if (!validIndex && scanSubFolders && mSubFolders.size() > 1) {
         int currFolderIdx = mSubFolders.indexOf(mCurrentDir);
+
+        if (currFolderIdx < 0) {
+            for (int idx = 0; idx < mSubFolders.size(); idx++) {
+                if (sameDirPath(mSubFolders.at(idx), mCurrentDir)) {
+                    currFolderIdx = idx;
+                    break;
+                }
+            }
+        }
+
         int newFolderIdx = getSubFolderIdx(currFolderIdx, newFileIdx >= 0);
 
-        qDebug() << mSubFolders;
-        qDebug() << "new folder idx: " << newFolderIdx;
+        if (newFolderIdx >= 0 && sameDirPath(mSubFolders.at(newFolderIdx), mCurrentDir))
+            newFolderIdx = getSubFolderIdx(newFolderIdx, newFileIdx >= 0);
 
         if (newFolderIdx < 0) {
             // not a problem; the subfolder list could all be empty folders
         } else {
             int oldFileSize = mImages.size();
 
-            qDebug() << "loading subfolder: " << mSubFolders[newFolderIdx];
             loadDir(mSubFolders.at(newFolderIdx), false); // don't scan recursive again
 
             if (newFileIdx >= oldFileSize) {
@@ -432,8 +456,6 @@ QSharedPointer<DkImageContainerT> DkImageLoader::getSkippedImage(int skipIdx,
                 skipIdx += currFileIdx + 1; // add how many being skipped
                 currFileIdx = mImages.size() - 1; // restart at last image in dir
             }
-
-            qDebug() << "new skip idx: " << skipIdx << "cFileIdx: " << currFileIdx << " -----------------------------";
             return getSkippedImage(skipIdx, true, currFileIdx);
         }
     }
@@ -591,6 +613,36 @@ QVector<QSharedPointer<DkImageContainerT>> DkImageLoader::getImages()
 {
     loadDir(mCurrentDir);
     return mImages;
+}
+
+QVector<QSharedPointer<DkImageContainerT>> DkImageLoader::getImagesForThumbView() const
+{
+    if (!DkSettingsManager::param().global().scanSubFolders || mSubFolders.size() <= 1)
+        return mImages;
+
+    QVector<QSharedPointer<DkImageContainerT>> allImages;
+
+    for (const QString &folderPath : mSubFolders) {
+        DkFileInfoList folderFiles = DkFileInfo::readDirectory(folderPath, mFolderFilterString);
+        if (folderFiles.empty())
+            continue;
+
+        QVector<QSharedPointer<DkImageContainerT>> folderImages;
+        folderImages.reserve(folderFiles.size());
+
+        for (const DkFileInfo &fileInfo : std::as_const(folderFiles))
+            folderImages << QSharedPointer<DkImageContainerT>(new DkImageContainerT(fileInfo));
+
+        auto cmp = DkImageContainer::compareFunc();
+        std::sort(folderImages.begin(), folderImages.end(), cmp);
+
+        if (DkSettingsManager::param().global().sortDir != DkSettings::sort_ascending)
+            std::reverse(folderImages.begin(), folderImages.end());
+
+        allImages += folderImages;
+    }
+
+    return allImages;
 }
 
 /**
@@ -1534,21 +1586,20 @@ QStringList DkImageLoader::getFoldersRecursive(const QString &dirPath)
     QStringList subFolders;
     // qDebug() << "scanning recursively: " << dir.absolutePath();
 
-    if (DkSettingsManager::param().global().scanSubFolders) {
-        QDirIterator dirs(dirPath,
-                          QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks,
-                          QDirIterator::Subdirectories);
+    const bool scanSubFolders = DkSettingsManager::param().global().scanSubFolders;
 
-        int nFolders = 0;
+    if (scanSubFolders) {
+        // Follow symlinked directories as part of recursive scans (e.g. month folders
+        // that are composed of symlinked day folders). Qt guards against symlink loops.
+        QDirIterator dirs(dirPath,
+                          QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable,
+                          QDirIterator::Subdirectories | QDirIterator::FollowSymlinks);
+
         while (dirs.hasNext()) {
             dirs.next();
             DkFileInfo fileInfo(dirs.filePath());
             if (fileInfo.isDir()) {
-                subFolders << fileInfo.path();
-                nFolders++;
-
-                if (nFolders > 100)
-                    break;
+                subFolders << QDir::cleanPath(fileInfo.path());
 
                 // getFoldersRecursive(dirs.filePath(), subFolders);
                 // qDebug() << "loop: " << dirs.filePath();
@@ -1556,11 +1607,9 @@ QStringList DkImageLoader::getFoldersRecursive(const QString &dirPath)
         }
     }
 
-    subFolders << dirPath;
+    subFolders << QDir::cleanPath(dirPath);
 
     std::sort(subFolders.begin(), subFolders.end(), DkUtils::compLogicQString);
-
-    qDebug() << dirPath << "loaded recursively...";
 
     // qDebug() << "scanning folders recursively took me: " << QString::fromStdString(dt.getTotal());
     return subFolders;
@@ -1570,7 +1619,6 @@ DkFileInfoList DkImageLoader::updateSubFolders(const QString &rootDirPath)
 {
     mSubFolders = getFoldersRecursive(rootDirPath);
     DkFileInfoList files;
-    qDebug() << mSubFolders;
 
     // find the first subfolder that has images
     for (int idx = 0; idx < mSubFolders.size(); idx++) {
@@ -1613,15 +1661,13 @@ int DkImageLoader::getSubFolderIdx(int fromIdx, bool forward) const
         if (checkIdx < 0 || checkIdx >= mSubFolders.size())
             return -1;
 
-        QDir cDir = mSubFolders[checkIdx];
         // FIXME: expensive call to read dir discards result
-        DkFileInfoList cFiles = DkFileInfo::readDirectory(cDir.absolutePath());
+        DkFileInfoList cFiles = DkFileInfo::readDirectory(mSubFolders.at(checkIdx));
         if (!cFiles.empty()) {
             idx = checkIdx;
             break;
         }
     }
-
     return idx;
 }
 
