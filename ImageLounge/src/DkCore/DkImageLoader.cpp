@@ -50,6 +50,7 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QRegularExpression>
+#include <QSet>
 #include <QStringBuilder>
 #include <QStringList>
 #include <QTimer>
@@ -70,12 +71,24 @@ namespace
 {
 bool sameDirPath(const QString &left, const QString &right)
 {
-#ifdef Q_OS_WIN
+// the default file systems on Windows and macOS are case-insensitive
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     constexpr Qt::CaseSensitivity caseSensitivity = Qt::CaseInsensitive;
 #else
     constexpr Qt::CaseSensitivity caseSensitivity = Qt::CaseSensitive;
 #endif
     return QString::compare(QDir::cleanPath(left), QDir::cleanPath(right), caseSensitivity) == 0;
+}
+
+// single home of the sort policy shared by sort() and getImagesForThumbView()
+void sortImageContainers(QVector<QSharedPointer<DkImageContainerT>> &images)
+{
+    const auto cmp = DkImageContainer::compareFunc();
+
+    std::sort(images.begin(), images.end(), cmp);
+
+    if (DkSettingsManager::param().global().sortDir != DkSettings::sort_ascending)
+        std::reverse(images.begin(), images.end());
 }
 
 }
@@ -161,19 +174,24 @@ bool DkImageLoader::loadDir(const QString &newDirPath, bool scanRecursive)
     // }
 
     DkTimer dt;
-    DkFileInfo info(newDirPath);
+
+    // normalize once at the write site so every comparison against mCurrentDir
+    // (mSubFolders.indexOf, thumb-view root checks, the fast paths below) sees
+    // the same form; mSubFolders entries are cleaned the same way
+    const QString dirPath = QDir::cleanPath(newDirPath);
+    DkFileInfo info(dirPath);
 
     // folder changed signal was emitted
-    if (mFolderUpdated && newDirPath == mCurrentDir) {
+    if (mFolderUpdated && dirPath == mCurrentDir) {
         mFolderUpdated = false;
         DkFileInfoList
-            files = DkFileInfo::readDirectory(newDirPath,
+            files = DkFileInfo::readDirectory(dirPath,
                                               mFolderFilterString); // this line takes seconds if you have lots of files
                                                                     // and slow loading (e.g. network)
 
         // might get empty too (e.g. someone deletes all images)
         if (files.empty()) {
-            emit showInfoSignal(tr("%1 \n does not contain any image").arg(newDirPath), 4000); // stop showing
+            emit showInfoSignal(tr("%1 \n does not contain any image").arg(dirPath), 4000); // stop showing
             mImages.clear();
             emit updateDirSignal(mImages);
             return false;
@@ -190,24 +208,30 @@ bool DkImageLoader::loadDir(const QString &newDirPath, bool scanRecursive)
         qDebug() << "getting file list.....";
     }
     // new folder is loaded
-    else if ((newDirPath != mCurrentDir || mImages.empty()) && !newDirPath.isEmpty() && info.isDir()) {
+    else if ((dirPath != mCurrentDir || mImages.empty()) && !dirPath.isEmpty() && info.isDir()) {
         DkFileInfoList files;
 
         // newDir.setNameFilters(DkSettingsManager::param().app().fileFilters);
         // newDir.setSorting(QDir::LocaleAware);		// TODO: extend
 
         // update save directory
-        mCurrentDir = newDirPath;
+        mCurrentDir = dirPath;
         mFolderUpdated = false;
 
         mFolderFilterString.clear(); // delete key words -> otherwise user may be confused
 
-        if (scanRecursive && DkSettingsManager::param().global().scanSubFolders)
+        if (scanRecursive && DkSettingsManager::param().global().scanSubFolders) {
             files = updateSubFolders(mCurrentDir);
-        else
+        } else {
+            // a stale recursive tree of a previous root must not leak into
+            // getRootDirPath()/getImagesForThumbView() when scanning is off
+            if (scanRecursive)
+                mSubFolders.clear();
+
             files = DkFileInfo::readDirectory(mCurrentDir,
                                               mFolderFilterString); // this line takes seconds if you have lots of files
                                                                     // and slow loading (e.g. network)
+        }
 
         // ok new folder, this should speed-up loading
         mImages.clear();
@@ -224,7 +248,7 @@ bool DkImageLoader::loadDir(const QString &newDirPath, bool scanRecursive)
         // else
         createImages(files, true);
 
-        qInfoClean() << newDirPath << " [" << mImages.size() << "] indexed in " << dt;
+        qInfoClean() << dirPath << " [" << mImages.size() << "] indexed in " << dt;
     }
     // else
     //	qDebug() << "ignoring... old dir: " << dir.absolutePath() << " newDir: " << newDir << " file size: " <<
@@ -439,9 +463,6 @@ QSharedPointer<DkImageContainerT> DkImageLoader::getSkippedImage(int skipIdx,
 
         int newFolderIdx = getSubFolderIdx(currFolderIdx, newFileIdx >= 0);
 
-        if (newFolderIdx >= 0 && sameDirPath(mSubFolders.at(newFolderIdx), mCurrentDir))
-            newFolderIdx = getSubFolderIdx(newFolderIdx, newFileIdx >= 0);
-
         if (newFolderIdx < 0) {
             // not a problem; the subfolder list could all be empty folders
         } else {
@@ -633,11 +654,7 @@ QVector<QSharedPointer<DkImageContainerT>> DkImageLoader::getImagesForThumbView(
         for (const DkFileInfo &fileInfo : std::as_const(folderFiles))
             folderImages << QSharedPointer<DkImageContainerT>(new DkImageContainerT(fileInfo));
 
-        auto cmp = DkImageContainer::compareFunc();
-        std::sort(folderImages.begin(), folderImages.end(), cmp);
-
-        if (DkSettingsManager::param().global().sortDir != DkSettings::sort_ascending)
-            std::reverse(folderImages.begin(), folderImages.end());
+        sortImageContainers(folderImages);
 
         allImages += folderImages;
     }
@@ -1582,7 +1599,9 @@ QString DkImageLoader::getDirPath() const
 
 QString DkImageLoader::getRootDirPath() const
 {
-    if (!mSubFolders.empty())
+    // mSubFolders may hold the tree of a directory that was loaded while
+    // subfolder scanning was still enabled; only trust it when it is active
+    if (DkSettingsManager::param().global().scanSubFolders && !mSubFolders.empty())
         return mSubFolders.first();
 
     return mCurrentDir;
@@ -1595,27 +1614,46 @@ QStringList DkImageLoader::getFoldersRecursive(const QString &dirPath)
     // qDebug() << "scanning recursively: " << dir.absolutePath();
 
     const bool scanSubFolders = DkSettingsManager::param().global().scanSubFolders;
+    const QString rootPath = QDir::cleanPath(dirPath);
 
     if (scanSubFolders) {
         // Follow symlinked directories as part of recursive scans (e.g. month folders
-        // that are composed of symlinked day folders). Qt guards against symlink loops.
-        QDirIterator dirs(dirPath,
+        // that are composed of symlinked day folders). Qt only guards against loops
+        // through symlinks, so keep a generous cap as a backstop for huge trees and
+        // for cycles it cannot detect (e.g. bind mounts); the scan runs synchronously
+        // on the GUI thread
+        constexpr int maxSubFolders = 10000;
+
+        // a folder reachable both via its real path and via a symlink alias must be
+        // listed only once, so dedupe on canonical paths
+        QSet<QString> seenCanonicalPaths;
+        seenCanonicalPaths << QFileInfo(rootPath).canonicalFilePath();
+
+        QDirIterator dirs(rootPath,
                           QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable,
                           QDirIterator::Subdirectories | QDirIterator::FollowSymlinks);
 
-        while (dirs.hasNext()) {
+        while (dirs.hasNext() && subFolders.size() < maxSubFolders) {
             dirs.next();
             DkFileInfo fileInfo(dirs.filePath());
             if (fileInfo.isDir()) {
-                subFolders << QDir::cleanPath(fileInfo.path());
+                const QString cleanPath = QDir::cleanPath(fileInfo.path());
+                QString canonicalPath = QFileInfo(cleanPath).canonicalFilePath();
+                if (canonicalPath.isEmpty()) // e.g. dangling symlink
+                    canonicalPath = cleanPath;
 
-                // getFoldersRecursive(dirs.filePath(), subFolders);
-                // qDebug() << "loop: " << dirs.filePath();
+                if (!seenCanonicalPaths.contains(canonicalPath)) {
+                    seenCanonicalPaths << canonicalPath;
+                    subFolders << cleanPath;
+                }
             }
         }
+
+        if (dirs.hasNext())
+            qWarning() << "recursive folder scan of" << rootPath << "stopped at" << maxSubFolders << "folders";
     }
 
-    subFolders << QDir::cleanPath(dirPath);
+    subFolders << rootPath;
 
     std::sort(subFolders.begin(), subFolders.end(), DkUtils::compLogicQString);
 
@@ -1764,13 +1802,7 @@ void DkImageLoader::sort()
             return;
         }
 
-    bool ascending = DkSettingsManager::param().global().sortDir == DkSettings::sort_ascending;
-
-    auto cmp = DkImageContainer::compareFunc();
-
-    std::sort(mImages.begin(), mImages.end(), cmp);
-    if (!ascending)
-        std::reverse(mImages.begin(), mImages.end());
+    sortImageContainers(mImages);
 
     emit updateDirSignal(mImages);
 }

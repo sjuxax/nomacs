@@ -272,6 +272,7 @@ public:
     void ensureVisible(const QString &path) const;
     void viewportChanged(const QRectF &portRect);
     QString loaderRootDirPath() const;
+    QString loaderDirPath() const;
 
 public slots:
     void updateThumbLabels();
@@ -301,6 +302,7 @@ private:
     void keyPressEvent(QKeyEvent *event) override;
     QString currentDir() const;
     QGraphicsView *getView() const;
+    bool isSceneVisible() const;
 
     int mXOffset = 0;
     int mNumRows = 0;
@@ -371,6 +373,7 @@ public slots:
     void batchPrint() const;
     void onLoadFileTriggered();
     void onThumbLoadFileRequested(const QString &filePath, bool newTab);
+    void onViewDirDropped(const QString &dirPath);
     void navigateUp();
 
 signals:
@@ -386,6 +389,7 @@ protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
     void connectToActions(bool activate = true);
     void updateUpAction();
+    void resetNavHistory();
     QString currentRootDir() const;
 
     DkThumbScene *mThumbsScene = nullptr;

@@ -1351,11 +1351,19 @@ void DkThumbScene::updateLayout()
 
 void DkThumbScene::updateThumbs(QVector<QSharedPointer<DkImageContainerT>> thumbs)
 {
-    // When recursively scanning subfolders, the loader only loads images for the
-    // current subfolder. For the thumbnail card view we want every image across all
-    // subfolders, so substitute the full recursive list when the loader is the sender.
-    if (mLoader && sender() == mLoader.data() && DkSettingsManager::param().global().scanSubFolders)
-        thumbs = mLoader->getImagesForThumbView();
+    if (mLoader && sender() == mLoader.data()) {
+        // rebuilding for a hidden view is wasted work (with subfolder scanning it
+        // synchronously re-reads whole directory trees); every path that shows the
+        // view again pushes a fresh list, so loader updates can be dropped meanwhile
+        if (!isSceneVisible())
+            return;
+
+        // When recursively scanning subfolders, the loader only loads images for the
+        // current subfolder. For the thumbnail card view we want every image across all
+        // subfolders, so substitute the full recursive list when the loader is the sender.
+        if (DkSettingsManager::param().global().scanSubFolders)
+            thumbs = mLoader->getImagesForThumbView();
+    }
 
     const DkThumbLabel *anchor = mThumbLabels.value(mSelectionAnchor);
     const DkThumbLabel *cursor = mThumbLabels.value(mSelectionCursor);
@@ -1637,6 +1645,14 @@ QString DkThumbScene::loaderRootDirPath() const
     return mLoader->getRootDirPath();
 }
 
+QString DkThumbScene::loaderDirPath() const
+{
+    if (!mLoader)
+        return QString();
+
+    return mLoader->getDirPath();
+}
+
 QString DkThumbScene::currentDir() const
 {
     if (mThumbs.empty()) {
@@ -1654,6 +1670,17 @@ QGraphicsView *DkThumbScene::getView() const
 {
     QList<QGraphicsView *> list = views();
     return list.value(0);
+}
+
+bool DkThumbScene::isSceneVisible() const
+{
+    const QList<QGraphicsView *> list = views();
+    for (auto *view : list) {
+        if (view->isVisible())
+            return true;
+    }
+
+    return false;
 }
 
 void DkThumbScene::toggleThumbLabels(bool show)
@@ -2479,10 +2506,24 @@ void DkThumbScrollWidget::onThumbLoadFileRequested(const QString &filePath, bool
         return;
     }
 
+    if (newTab) {
+        // the file opens in another tab with its own loader, so this
+        // view's root does not change and no navigation entry is recorded
+        emit loadFileSignal(filePath, true);
+        return;
+    }
+
     const QString rootDir = currentRootDir();
+    const QString currentDir = mThumbsScene ? QDir::cleanPath(mThumbsScene->loaderDirPath()) : QString();
     const QString targetDir = QDir::cleanPath(QFileInfo(filePath).absolutePath());
 
-    if (!rootDir.isEmpty() && !targetDir.isEmpty() && rootDir != targetDir) {
+    // loading the file only re-roots the view when its folder differs from the
+    // loader's current folder; otherwise the load is a no-op for the root and
+    // recording it would enable "Up" for a navigation that never happened
+    const bool willReRoot = !rootDir.isEmpty() && !targetDir.isEmpty() //
+        && rootDir != targetDir && targetDir != currentDir;
+
+    if (willReRoot) {
         if (!mNavHistory.empty() && mNavHistory.constLast().dirPath == rootDir) {
             mNavHistory.last().anchorFilePath = filePath;
         } else {
@@ -2495,7 +2536,7 @@ void DkThumbScrollWidget::onThumbLoadFileRequested(const QString &filePath, bool
     }
 
     updateUpAction();
-    emit loadFileSignal(filePath, newTab);
+    emit loadFileSignal(filePath, false);
 }
 
 void DkThumbScrollWidget::navigateUp()
@@ -2537,21 +2578,32 @@ void DkThumbScrollWidget::updateThumbs(QVector<QSharedPointer<DkImageContainerT>
 void DkThumbScrollWidget::clear()
 {
     mThumbsScene->updateThumbs(QVector<QSharedPointer<DkImageContainerT>>());
-    mNavHistory.clear();
-    mExpectedRootDirAfterLoad.clear();
-    mLastKnownRootDir.clear();
-    updateUpAction();
+    resetNavHistory();
 }
 
 void DkThumbScrollWidget::setDir(const QString &dirPath)
 {
     if (isVisible()) {
-        mNavHistory.clear();
-        mExpectedRootDirAfterLoad.clear();
-        mLastKnownRootDir.clear();
-        updateUpAction();
+        resetNavHistory();
         emit updateDirSignal(dirPath);
     }
+}
+
+void DkThumbScrollWidget::onViewDirDropped(const QString &dirPath)
+{
+    // dropping a folder onto the view loads a new tree through the direct
+    // loader->scene connection, which bypasses updateThumbs(); the history
+    // of the previous tree must not survive that
+    resetNavHistory();
+    emit updateDirSignal(dirPath);
+}
+
+void DkThumbScrollWidget::resetNavHistory()
+{
+    mNavHistory.clear();
+    mExpectedRootDirAfterLoad.clear();
+    mLastKnownRootDir.clear();
+    updateUpAction();
 }
 
 void DkThumbScrollWidget::setVisible(bool visible)
@@ -2633,7 +2685,7 @@ void DkThumbScrollWidget::connectToActions(bool activate)
         connect(am.action(DkActionManager::preview_print), &QAction::triggered, this, &DkThumbScrollWidget::batchPrint);
 
         connect(mFilterEdit, &QLineEdit::textChanged, this, &DkThumbScrollWidget::filterChangedSignal);
-        connect(mView, &DkThumbsView::updateDirSignal, this, &DkThumbScrollWidget::updateDirSignal);
+        connect(mView, &DkThumbsView::updateDirSignal, this, &DkThumbScrollWidget::onViewDirDropped);
         connect(mThumbsScene, &DkThumbScene::selectionChanged, this, &DkThumbScrollWidget::enableSelectionActions);
     } else {
         disconnect(am.action(DkActionManager::preview_select_all),
@@ -2686,7 +2738,7 @@ void DkThumbScrollWidget::connectToActions(bool activate)
                    &DkThumbScrollWidget::batchPrint);
 
         disconnect(mFilterEdit, &QLineEdit::textChanged, this, &DkThumbScrollWidget::filterChangedSignal);
-        disconnect(mView, &DkThumbsView::updateDirSignal, this, &DkThumbScrollWidget::updateDirSignal);
+        disconnect(mView, &DkThumbsView::updateDirSignal, this, &DkThumbScrollWidget::onViewDirDropped);
         disconnect(mThumbsScene, &DkThumbScene::selectionChanged, this, &DkThumbScrollWidget::enableSelectionActions);
     }
 }
