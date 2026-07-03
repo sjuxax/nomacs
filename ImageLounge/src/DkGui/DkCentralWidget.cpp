@@ -883,6 +883,11 @@ void DkCentralWidget::showThumbView(bool show)
                        &DkThumbScrollWidget::filterChangedSignal,
                        tabInfo->getImageLoader().data(),
                        &DkImageLoader::setFolderFilter);
+
+            // detach the loader so the hidden scene does not rebuild (and, with
+            // subfolder scanning, re-read the whole tree) on every loader signal;
+            // showing the view again sets the loader and a fresh list anyway
+            tw->getThumbWidget()->setImageLoader(nullptr);
         }
     }
 }
