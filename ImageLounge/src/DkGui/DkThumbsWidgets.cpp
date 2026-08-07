@@ -880,23 +880,12 @@ void DkFilePreview::moveImages()
     update();
 }
 
-void DkFilePreview::setFileInfo(QSharedPointer<DkImageContainerT> cImage)
+void DkFilePreview::setFileIndex(int fileIdx)
 {
-    if (!cImage)
-        return;
-
-    int tIdx = -1;
-
-    for (int idx = 0; static_cast<unsigned int>(idx) < mFiles.size(); idx++) {
-        if (mFiles[idx] == cImage->originalFileInfo()) {
-            tIdx = idx;
-            break;
-        }
-    }
-
-    currentFileIdx = tIdx;
-    if (currentFileIdx >= 0)
+    currentFileIdx = fileIdx;
+    if (currentFileIdx >= 0) {
         scrollToCurrentImage = true;
+    }
     update();
 }
 
@@ -1794,6 +1783,7 @@ void DkThumbScene::copySelected() const
 
     auto *mimeData = new QMimeData();
     mimeData->setUrls(urls);
+    mimeData->setText(fileList.join("\n"));
 
     QApplication::clipboard()->setMimeData(mimeData);
 }
@@ -1886,16 +1876,16 @@ void DkThumbScene::deleteSelected()
     if (numFiles <= 0)
         return;
 
-    auto *msgBox = new DkMessageBox(QMessageBox::Question,
-                                    tr("Delete File"),
-                                    tr("Shall I move %1 file(s) to trash?").arg(numFiles),
-                                    (QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel),
-                                    DkUtils::getMainWindow());
+    DkMessageBox msgBox(QMessageBox::Question,
+                        tr("Delete File"),
+                        tr("Shall I move %1 file(s) to trash?").arg(numFiles),
+                        (QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel),
+                        DkUtils::getMainWindow());
 
-    msgBox->setDefaultButton(QMessageBox::Yes);
-    msgBox->setObjectName("deleteThumbFileDialog");
+    msgBox.setDefaultButton(QMessageBox::Yes);
+    msgBox.setObjectName("deleteThumbFileDialog");
 
-    int answer = msgBox->exec();
+    int answer = msgBox.exec();
 
     if (answer == QMessageBox::Yes || answer == QMessageBox::Accepted) {
         (void)DkUtils::moveToTrash(getSelectedFiles());
@@ -1909,19 +1899,20 @@ void DkThumbScene::renameSelected() const
         return;
 
     bool ok;
+    const bool oneFile = fileList.count() == 1;
     QString newFileName = QInputDialog::getText(DkUtils::getMainWindow(),
-                                                tr("Rename File(s)"),
-                                                tr("New Filename:"),
+                                                oneFile ? tr("Rename File") : tr("Rename Multiple Files"),
+                                                oneFile ? tr("New Filename:") : tr("Filename Prefix:"),
                                                 QLineEdit::Normal,
-                                                "",
+                                                oneFile ? QFileInfo(fileList[0]).completeBaseName() : "img",
                                                 &ok);
 
     if (!ok || newFileName.isEmpty()) {
         return;
     }
 
-    QString pattern = (fileList.size() == 1) ? newFileName + ".<old>"
-                                             : newFileName + "<d:3>.<old>"; // no index if just 1 file was added
+    QString pattern = oneFile ? newFileName + ".<old>"
+                              : newFileName + "<d:3>.<old>"; // no index if just 1 file was added
     DkFileNameConverter converter(pattern);
 
     for (int idx = 0; idx < fileList.size(); idx++) {

@@ -61,7 +61,6 @@
 
 #ifdef WITH_OPENCV
 #include "opencv2/imgproc/imgproc.hpp"
-#include "opencv2/imgproc/imgproc_c.h"
 #endif
 
 #ifdef Q_OS_WIN
@@ -646,16 +645,16 @@ void DkViewPort::deleteImage()
     question = tr("Do you want to permanently delete %1?").arg(fileInfo.fileName());
 #endif
 
-    auto *msgBox = new DkMessageBox(QMessageBox::Question,
-                                    tr("Delete File"),
-                                    question,
-                                    (QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel),
-                                    this);
+    DkMessageBox msgBox(QMessageBox::Question,
+                        tr("Delete File"),
+                        question,
+                        (QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel),
+                        this);
 
-    msgBox->setDefaultButton(QMessageBox::Yes);
-    msgBox->setObjectName("deleteFileDialog");
+    msgBox.setDefaultButton(QMessageBox::Yes);
+    msgBox.setObjectName("deleteFileDialog");
 
-    int answer = msgBox->exec();
+    int answer = msgBox.exec();
 
     if (answer == QMessageBox::Accepted || answer == QMessageBox::Yes)
         mLoader->deleteFile();
@@ -1317,10 +1316,25 @@ void DkViewPort::wheelEvent(QWheelEvent *event)
         } else {
             delta = event->angleDelta().y();
         }
-        if (delta < 0)
+
+        // accumulate deltas and only navigate on a full wheel step (120):
+        // high-resolution wheels (e.g. Logitech MX/G-series, some touchpads) report
+        // several small-delta events per notch, which skipped multiple images (#1079)
+        constexpr int wheelStep = 120; // Qt reports wheel deltas in 1/8 degree; one notch = 15 degrees
+
+        // reset the accumulator when the scroll direction changes
+        if ((delta < 0 && mWheelAccumulator > 0) || (delta > 0 && mWheelAccumulator < 0))
+            mWheelAccumulator = 0;
+
+        mWheelAccumulator += delta;
+
+        if (mWheelAccumulator <= -wheelStep) {
             loadNextFileFast();
-        if (delta > 0)
+            mWheelAccumulator += wheelStep;
+        } else if (mWheelAccumulator >= wheelStep) {
             loadPrevFileFast();
+            mWheelAccumulator -= wheelStep;
+        }
     } else
         DkBaseViewPort::wheelEvent(event);
 
@@ -1878,9 +1892,9 @@ void DkViewPort::connectLoader(QSharedPointer<DkImageLoader> loader, bool connec
                 &DkFilePreview::updateThumbs,
                 Qt::UniqueConnection);
         connect(loader.data(),
-                QOverload<QSharedPointer<DkImageContainerT>>::of(&DkImageLoader::imageUpdatedSignal),
+                QOverload<int>::of(&DkImageLoader::imageUpdatedSignal),
                 mController->getFilePreview(),
-                &DkFilePreview::setFileInfo,
+                &DkFilePreview::setFileIndex,
                 Qt::UniqueConnection);
 
         connect(loader.data(),
@@ -1923,9 +1937,9 @@ void DkViewPort::connectLoader(QSharedPointer<DkImageLoader> loader, bool connec
                    mController->getFilePreview(),
                    &DkFilePreview::updateThumbs);
         disconnect(loader.data(),
-                   QOverload<QSharedPointer<DkImageContainerT>>::of(&DkImageLoader::imageUpdatedSignal),
+                   QOverload<int>::of(&DkImageLoader::imageUpdatedSignal),
                    mController->getFilePreview(),
-                   &DkFilePreview::setFileInfo);
+                   &DkFilePreview::setFileIndex);
 
         disconnect(loader.data(), &DkImageLoader::showInfoSignal, mController, &DkControlWidget::setInfo);
 
@@ -2365,7 +2379,7 @@ void DkViewPortContrast::setImage(const QImage &newImg)
         }
         // The first element in the vector contains the gray scale 'average' of the 3 channels:
         cv::Mat grayMat;
-        cv::cvtColor(imgUC3, grayMat, CV_BGR2GRAY);
+        cv::cvtColor(imgUC3, grayMat, cv::COLOR_BGR2GRAY);
         auto grayImg = QImage((const unsigned char *)grayMat.data,
                               (int)grayMat.cols,
                               (int)grayMat.rows,

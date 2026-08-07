@@ -50,7 +50,6 @@
 
 #ifdef WITH_OPENCV
 #include "opencv2/imgproc/imgproc.hpp"
-#include "opencv2/imgproc/imgproc_c.h"
 #endif
 
 #include <cmath>
@@ -169,22 +168,22 @@ QImage DkImage::resizeImage(const QImage &src,
         QImage inImg = correctGamma ? convertToLinear(src) : src;
 
 #if WITH_OPENCV
-        int ipl = CV_INTER_CUBIC;
+        int ipl = cv::INTER_CUBIC;
         switch (interpolation) {
         case ipl_nearest:
-            ipl = CV_INTER_NN;
+            ipl = cv::INTER_NEAREST;
             break;
         case ipl_area:
-            ipl = CV_INTER_AREA;
+            ipl = cv::INTER_AREA;
             break;
         case ipl_linear:
-            ipl = CV_INTER_LINEAR;
+            ipl = cv::INTER_LINEAR;
             break;
         case ipl_cubic:
-            ipl = CV_INTER_CUBIC;
+            ipl = cv::INTER_CUBIC;
             break;
         case ipl_lanczos:
-            ipl = CV_INTER_LANCZOS4;
+            ipl = cv::INTER_LANCZOS4;
             break;
         }
 
@@ -2181,7 +2180,7 @@ void DkImage::logPolar(const cv::Mat &src,
         }
     }
 
-    cv::remap(src, dst, mapx, mapy, CV_INTER_AREA, IPL_BORDER_REPLICATE);
+    cv::remap(src, dst, mapx, mapy, cv::INTER_AREA, cv::BORDER_REPLICATE);
 }
 
 QImage DkImage::tinyPlanet(const QImage &img, double scaleLog, double angle, const QSize &size, bool invert)
@@ -2251,7 +2250,6 @@ bool DkImage::isResizeDownsampling(const QSize &srcSize, int dstSize, ScaleConst
         return srcSize.height() >= dstSize;
     }
     Q_UNREACHABLE();
-    return false;
 }
 
 QImage DkImage::createThumb(const QImage &image, int maxSize, ScaleConstraint constraint)
@@ -2306,7 +2304,7 @@ QImage DkImage::createThumb(const QImage &image, int maxSize, ScaleConstraint co
         try {
             const auto srcImg = DkNativeImage::fromConstImage(image);
             auto dstImg = srcImg.allocateLike(QSize{imgW, imgH});
-            cv::resize(srcImg.constMat(), dstImg.mat(), cv::Size(imgW, imgH), 0, 0, CV_INTER_AREA);
+            cv::resize(srcImg.constMat(), dstImg.mat(), cv::Size(imgW, imgH), 0, 0, cv::INTER_AREA);
             thumb = dstImg.img();
         } catch (...) {
             qWarning() << "[createThumb] exception while resizing";
@@ -2669,7 +2667,7 @@ protected:
         return render<ChannelType>(self, Format::Type, Format::Channels);
     }
 
-    static constexpr int kCaps = cap_gray | cap_rgb_invariant | cap_serial;
+    static constexpr int kCaps = cap_gray | cap_rgb | cap_bgr | cap_serial;
     static constexpr FmtList kFmts = listForKernelCaps(kCaps);
     static constexpr DispatchTable kTable = makeTable<DkHistogramRender>(kFmts);
 
@@ -2871,7 +2869,7 @@ DkImageStorage::ScaledImage DkImageStorage::scaleImage(const QImage &src,
         try {
             const auto input = DkNativeImage::fromConstImage(resizedImg);
             auto output = input.allocateLike(s);
-            cv::resize(input.constMat(), output.mat(), cv::Size(s.width(), s.height()), 0, 0, CV_INTER_AREA);
+            cv::resize(input.constMat(), output.mat(), cv::Size(s.width(), s.height()), 0, 0, cv::INTER_AREA);
             scaled = output.img();
         } catch (...) {
             qWarning() << "[ImageStorage]: OpenCV exception while resizing";

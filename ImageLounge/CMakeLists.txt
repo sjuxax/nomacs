@@ -12,7 +12,7 @@ include(GNUInstallDirs)
 # needed for soname
 set(NOMACS_VERSION_MAJOR 3)
 set(NOMACS_VERSION_MINOR 23)
-set(NOMACS_VERSION_PATCH 1)
+set(NOMACS_VERSION_PATCH 3)
 set(NOMACS_VERSION ${NOMACS_VERSION_MAJOR}.${NOMACS_VERSION_MINOR})
 set(NOMACS_FULL_VERSION ${NOMACS_VERSION}.${NOMACS_VERSION_PATCH})
 
@@ -42,15 +42,9 @@ option(ENABLE_QUAZIP "Compile with QuaZip (allows opening .zip files)" OFF)
 option(ENABLE_INCREMENTER "Run Build Incrementer" OFF)
 option(ENABLE_TRANSLATIONS "Compile Translations" ON)
 option(ENABLE_PLUGINS "Compile nomacs with plugin support" ON)
-option(ENABLE_HEIF "Download HEIF plug-in (Windows only)" OFF)
-option(ENABLE_AVIF "Download AVIF plug-in (Windows only)" OFF)
-option(ENABLE_JXL "Download JPEG XL plug-in (Windows only)" OFF)
-option(ENABLE_JXR "Download JPEG XR plug-in (Windows only)" OFF)
-option(ENABLE_EXR "Download OpenEXR plug-in (Windows only)" OFF)
 option(ENABLE_CODE_COV "Run Code Coverage tests" OFF)
 option(ENABLE_TESTING "Run tests" ON)
 option(ENABLE_BENCHMARK "Run benchmark" OFF)
-option(USE_SYSTEM_QUAZIP "QuaZip will not be compiled from source" ON) # ignored by MSVC
 option(ENABLE_PCH "Enable precompiled headers" OFF)
 
 # Codecov
